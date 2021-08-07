@@ -6,6 +6,8 @@
 #define ALL(x) std::begin(x), std::end(x)
 using namespace std;
 
+template <class T> using reversed_priority_queue = priority_queue<T, vector<T>, greater<T> >;
+
 class xor_shift_128 {
 public:
     typedef uint32_t result_type;
@@ -29,75 +31,302 @@ private:
     uint32_t a, b, c, d;
 };
 
-constexpr int N = 50;
-
-constexpr array<int, 4> DIRS = {{0, 1, 2, 3}};
 constexpr array<int, 4> DIR_Y = {-1, 1, 0, 0};
 constexpr array<int, 4> DIR_X = {0, 0, 1, -1};
-inline bool is_on_tiles(int y, int x) {
-    return 0 <= y and y < N and 0 <= x and x < N;
-}
 
-inline uint16_t pack_point(int y, int x) {
-    return (y << 8) + x;
-}
-
-inline pair<int, int> unpack_point(int packed) {
-    return {packed >> 8, packed & ((1 << 8) - 1)};
-}
-
-string convert_to_command_string(const vector<uint16_t>& result) {
+string convert_to_command_string(const vector<pair<int, int>>& result) {
     assert (not result.empty());
     string ans;
     REP (i, (int)result.size() - 1) {
-        auto [ay, ax] = unpack_point(result[i]);
-        auto [by, bx] = unpack_point(result[i + 1]);
-        if (by == ay - 1 and bx == ax) {
-            ans.push_back('U');
-        } else if (by == ay + 1 and bx == ax) {
-            ans.push_back('D');
-        } else if (by == ay and bx == ax + 1) {
-            ans.push_back('R');
-        } else if (by == ay and bx == ax - 1) {
-            ans.push_back('L');
-        } else {
-            assert (false);
+        auto [ay, ax] = result[i];
+        auto [by, bx] = result[i + 1];
+        while (true) {
+            if (by < ay and bx == ax) {
+                ans.push_back('U');
+                -- ay;
+            } else if (by > ay and bx == ax) {
+                ans.push_back('D');
+                ++ ay;
+            } else if (by == ay and bx > ax) {
+                ans.push_back('R');
+                ++ ax;
+            } else if (by == ay and bx < ax) {
+                ans.push_back('L');
+                -- ax;
+            } else if (by == ay and bx == ax) {
+                break;
+            } else {
+                assert (false);
+            }
         }
     }
     return ans;
 }
 
+vector<vector<int>> run_dijkstra(int n, int sy, int sx, const vector<vector<int>> &c) {
+    vector<vector<int>> dist(n, vector<int>(n, INT_MAX));
+    reversed_priority_queue<tuple<int, int, int>> que;
+    dist[sy][sx] = 0;
+    que.emplace(dist[sy][sx], sy, sx);
+    while (not que.empty()) {
+        auto [dist_y_x, y, x] = que.top();
+        que.pop();
+        if (dist[y][x] < dist_y_x) continue;
+        REP (dir, 4) {
+            int ny = y + DIR_Y[dir];
+            int nx = x + DIR_X[dir];
+            if (0 <= ny and ny < n and 0 <= nx and nx < n) {
+                if (c[ny][nx] != INT_MAX) {
+                    if (dist[y][x] + c[ny][nx] < dist[ny][nx]) {
+                        dist[ny][nx] = dist[y][x] + c[ny][nx];
+                        que.emplace(dist[ny][nx], ny, nx);
+                    }
+                }
+            }
+        }
+    }
+    return dist;
+}
+
+template <class T, class RandomEngine>
+T get_sample(const vector<T> &xs, RandomEngine &gen) {
+    int n = xs.size();
+    assert (n >= 1);
+    int i = uniform_int_distribution<int>(0, n - 1)(gen);
+    return xs[i];
+}
+
 template <class RandomEngine>
-string solve(const int sy, const int sx, const array<array<int, N>, N>& tile, const array<array<int, N>, N>& point, RandomEngine& gen, chrono::high_resolution_clock::time_point clock_end) {
+string solve(const int n, const int start_y, const int start_x, const vector<vector<int>> &original_c, RandomEngine& gen, chrono::high_resolution_clock::time_point clock_end) {
     chrono::high_resolution_clock::time_point clock_begin = chrono::high_resolution_clock::now();
 
-    int M = 0;
-    REP (y, N) {
-        REP (x, N) {
-            M = max(M, tile[y][x] + 1);
+    // Make a copy
+    vector<vector<int>> c = original_c;
+
+#ifdef VISUALIZE
+    cerr << "input:" << endl;
+    REP (y, n) {
+        REP (x, n) {
+            cerr << (char)(c[y][x] == INT_MAX ? ' ' : '0' + c[y][x]);
+        }
+        cerr << endl;
+    }
+#endif
+
+    // Run Dijkstra from (start_y, start_x), before removing dead ends
+    vector<vector<int>> dist_from_start = run_dijkstra(n, start_y, start_x, c);
+    vector<vector<int>> dist_to_start = dist_from_start;
+    REP (y, n) {
+        REP (x, n) {
+            if (c[y][x] != INT_MAX) {
+                dist_to_start[y][x] -= c[y][x];
+                dist_to_start[y][x] += c[start_y][start_x];
+            }
         }
     }
 
-    vector<uint16_t> path_prev;
-    path_prev.push_back(pack_point(sy, sx));
-    vector<int16_t> used_tile_prev(M, INT16_MAX);
-    used_tile_prev[tile[sy][sx]] = 0;
-    array<array<bool, N>, N> used_pos_prev = {};
-    used_pos_prev[sy][sx] = true;
-    vector<int> score_prev;
-    score_prev.push_back(0);
-    score_prev.push_back(point[sy][sx]);
+    auto list_neighbors = [&](int y, int x) -> vector<pair<int, int>> {
+        vector<pair<int, int>> neighbors;
+        REP (dir, 4) {
+            int ny = y + DIR_Y[dir];
+            int nx = x + DIR_X[dir];
+            if (0 <= ny and ny < n and 0 <= nx and nx < n) {
+                if (c[ny][nx] != INT_MAX) {
+                    neighbors.emplace_back(ny, nx);
+                }
+            }
+        }
+        return neighbors;
+    };
 
-    vector<uint16_t> result = path_prev;
-    int highscore = score_prev.back();
+    // Save neighbors of the start point, before remobing dead ends
+    auto start_neighbors = list_neighbors(start_y, start_x);
+
+    // Remove dead ends
+    auto remove_if_dead_end = [&](int y, int x) -> void {
+        if (c[y][x] != INT_MAX) {
+            if (list_neighbors(y, x).size() == 1) {
+                c[y][x] = INT_MAX;
+            }
+        }
+    };
+    // REP (y, n) {
+    //     REP (x, n) {
+    //         remove_if_dead_end(y, x);
+    //     }
+    //     REP_R (x, n) {
+    //         remove_if_dead_end(y, x);
+    //     }
+    // }
+    // REP_R (y, n) {
+    //     REP (x, n) {
+    //         remove_if_dead_end(y, x);
+    //     }
+    //     REP_R (x, n) {
+    //         remove_if_dead_end(y, x);
+    //     }
+    // }
 #ifdef VISUALIZE
-    int highscore_index = 0;
-    cerr << "-----BEGIN-----" << endl;
-    cerr << convert_to_command_string(result) << endl;
-    cerr << "-----END-----" << endl;
-#endif  // VISUALIZE
+    cerr << "no dead ends:" << endl;
+    REP (y, n) {
+        REP (x, n) {
+            cerr << (char)(c[y][x] == INT_MAX ? ' ' : '0' + c[y][x]);
+        }
+        cerr << endl;
+    }
+#endif
 
-    // simulated annealing
+    // Collect intersections of roads
+    int intersection_count = 0;
+    vector<vector<int>> intersection_index(n, vector<int>(n, -1));
+    REP (y, n) {
+        REP (x, n) {
+            if (c[y][x] != INT_MAX) {
+                auto neighbors = list_neighbors(y, x);
+                int sum_dy = 0;
+                int sum_dx = 0;
+                for (auto [ny, nx] : neighbors) {
+                    sum_dy += ny - y;
+                    sum_dx += nx - x;
+                }
+                if (neighbors.size() >= 3 or (sum_dy != 0 or sum_dx != 0) or neighbors.size() == 1) {
+                    intersection_index[y][x] = intersection_count;
+                    intersection_count += 1;
+                }
+            }
+        }
+    }
+#ifdef LOCAL
+    cerr << "intersection count = " << intersection_count << endl;
+#endif
+
+    // Make the succinct graph of intersections
+    vector<vector<pair<int, int>>> g(intersection_count);
+    vector<pair<int, int>> intersection_location(intersection_count);
+    REP (y, n) {
+        REP (x, n) {
+            int i = intersection_index[y][x];
+            if (i == -1) {
+                continue;
+            }
+            intersection_location[i] = make_pair(y, x);
+
+            // up and left
+            for (int dir : {0, 3}) {
+                int ny = y + DIR_Y[dir];
+                int nx = x + DIR_X[dir];
+                if (not (0 <= ny and ny < n and 0 <= nx and nx < n) or c[ny][nx] == INT_MAX) {
+                    continue;
+                }
+                int cost = 0;
+                while (intersection_index[ny][nx] == -1) {
+                    cost += c[ny][nx];
+                    ny += DIR_Y[dir];
+                    nx += DIR_X[dir];
+                }
+                int j = intersection_index[ny][nx];
+                g[i].emplace_back(j, cost + c[ny][nx]);
+                g[j].emplace_back(i, cost + c[y][x]);
+            }
+        }
+    }
+#ifdef VISUALIZE
+    REP (y, n) {
+        REP (x, n) {
+            int i = intersection_index[y][x];
+            if (i == -1) {
+                continue;
+            }
+            for (auto [j, cost] : g[i]) {
+                auto [ny, nx] = intersection_location[j];
+                // cerr << "(" << y << ", " << x << ") -> (" << ny << ", " << nx << "): " << cost << endl;
+            }
+        }
+    }
+#endif
+
+    auto dist_to_start_intersection = [&](int i) {
+        assert (0 <= i and i < intersection_count);
+        auto [y, x] = intersection_location[i];
+        return dist_to_start[y][x];
+    };
+    auto dist_from_start_intersection = [&](int i) {
+        assert (0 <= i and i < intersection_count);
+        auto [y, x] = intersection_location[i];
+        return dist_from_start[y][x];
+    };
+
+    // Warshall-Floyd on the intersections graph
+    vector<vector<int>> dist(intersection_count, vector<int>(intersection_count, 1e9));  // use small INF
+    REP (i, intersection_count) {
+        for (auto [j, cost] : g[i]) {
+            dist[i][j] = cost;
+        }
+    }
+    REP (k, intersection_count) {
+        REP (i, intersection_count) {
+            REP (j, intersection_count) {
+                dist[i][j] = min(dist[i][j], dist[i][k] + dist[k][j]);
+            }
+        }
+    }
+
+    // List streets
+    int street_count = 0;
+    vector<array<int, 2>> streets_of(intersection_count, {-1, -1});
+    REP (i, intersection_count) {
+        auto [y, x] = intersection_location[i];
+        // up and left
+        for (int dir : {0, 3}) {
+            int ny = y + DIR_Y[dir];
+            int nx = x + DIR_X[dir];
+            // the upper end or the left end of a street
+            if (not (0 <= ny and ny < n and 0 <= nx and nx < n) or c[ny][nx] == INT_MAX) {
+                int k = street_count;
+                street_count += 1;
+                dir ^= 1;  // flip the direction
+                ny = y;
+                nx = x;
+                while (0 <= ny and ny < n and 0 <= nx and nx < n and c[ny][nx] != INT_MAX) {
+                    if (intersection_index[ny][nx] != -1) {
+                        streets_of[intersection_index[ny][nx]][dir == 1 ? 0 : 1] = k;
+                    }
+                    ny += DIR_Y[dir];
+                    nx += DIR_X[dir];
+                }
+            }
+        }
+    }
+#ifdef VISUALIZE
+    REP (i, intersection_count) {
+        auto [y, x] = intersection_location[i];
+        // cerr << "(" << y << ", " << x << ") looks " << streets_of[i][0] << " and " << streets_of[i][0] << endl;
+    }
+#endif
+
+    // Find start points of the intersections graph
+    vector<int> start_intersections;
+    if (intersection_index[start_y][start_x] != -1) {
+        start_intersections.push_back(intersection_index[start_y][start_x]);
+    } else {
+        // use neighbors which is calculated before removing dead ends
+        for (auto [ny, nx] : start_neighbors) {
+            int dy = ny - start_y;
+            int dx = nx - start_x;
+            while ((0 <= ny and ny < n and 0 <= nx and nx < n) and original_c[ny][nx] != INT_MAX) {
+                if (intersection_index[ny][nx] != -1) {
+                    start_intersections.push_back(intersection_index[ny][nx]);
+                    break;
+                }
+                ny += dy;
+                nx += dx;
+            }
+        }
+    }
+
+    vector<int> result;
+    int highscore = INT_MAX;
+
     int64_t iteration = 0;
     double temperature = 1.0;
     for (; ; ++ iteration) {
@@ -110,135 +339,100 @@ string solve(const int sy, const int sx, const array<array<int, N>, N>& tile, co
             }
         }
 
-        int start = uniform_int_distribution<int>(1, path_prev.size())(gen);
-        vector<char> used_tile_next(M);
-        auto get_used_tile = [&](int y, int x) {
-            int i = tile[y][x];
-            return used_tile_prev[i] < start or used_tile_next[i];
+        vector<int> path;
+        int score = 0;
+        vector<bool> used(street_count);
+        int cnt = 0;
+        auto use = [&](int i) {
+            if (path.empty()) {
+                score += dist_from_start_intersection(i);
+            } else {
+                score += dist[path.back()][i];
+            }
+            path.push_back(i);
+            for (int k : streets_of[i]) {
+                if (not used[k]) {
+                    used[k] = true;
+                    cnt += 1;
+                }
+            }
         };
-        vector<uint16_t> diff;
-        int score_next = score_prev[start];
-        auto [y, x] = unpack_point(path_prev[start - 1]);
-        while (true) {
-            array<int, 4> dirs = {{0, 1, 2, 3}};
-            shuffle(ALL(dirs), gen);
-            bool found = false;
-            for (int dir : dirs) {
-                int ny = y + DIR_Y[dir];
-                int nx = x + DIR_X[dir];
-                if (not is_on_tiles(ny, nx)) {
-                    continue;
-                }
-                if (diff.empty() and start < path_prev.size() and path_prev[start] == pack_point(ny, nx)) {
-                    continue;
-                }
-                if (not get_used_tile(ny, nx)) {
-                    found = true;
-                    diff.push_back(pack_point(ny, nx));
-                    y = ny;
-                    x = nx;
-                    used_tile_next[tile[y][x]] = true;
-                    score_next += point[y][x];
+        use(get_sample(start_intersections, gen));
+        while (cnt < street_count) {
+            int i = path.back();
+            int j;
+            while (true) {
+                j = get_sample(g[i], gen).first;
+                if (path.size() < 2 or path[path.size() - 2] != j or g[i].size() == 1) {
                     break;
                 }
             }
-            if (not found) {
-                break;
-            }
-            if (used_pos_prev[y][x]) {
-                break;
-            }
+            use(j);
         }
-        if (diff.empty()) {
-            continue;
-        }
-        int tail_first = path_prev.size();
-        int tail_last = path_prev.size();
-        if (used_pos_prev[y][x]) {
-            tail_first = start;
-            while (tail_first < path_prev.size() and path_prev[tail_first] != pack_point(y, x)) {
-                ++ tail_first;
-            }
-            assert (tail_first < path_prev.size());
-            ++ tail_first;
-            REP3 (i, tail_first, path_prev.size()) {
-                auto [y, x] = unpack_point(path_prev[i]);
-                if (get_used_tile(y, x)) {
-                    tail_last = i;
-                    break;
-                }
-                used_tile_next[tile[y][x]] = true;
-            }
-        }
-        score_next += score_prev[tail_last] - score_prev[tail_first];
+        score += dist_to_start_intersection(path.back());
 
-        int delta = score_next - score_prev.back();
-        auto probability = [&]() {
-            constexpr long double boltzmann = 0.01;
-            return exp(boltzmann * delta / temperature);
-        };
-        if (delta >= 0 or bernoulli_distribution(probability())(gen)) {
-            // accept
-            if (delta < 0) {
-#ifdef VERBOSE
-                cerr << "decreasing move  (delta = " << delta << ", iteration = " << iteration << ")" << endl;
-#endif  // VERBOSE
-            }
-
-            diff.insert(diff.end(), path_prev.begin() + tail_first, path_prev.begin() + tail_last);
-            path_prev.resize(start);
-            path_prev.insert(path_prev.end(), ALL(diff));
-            used_tile_prev.assign(M, INT16_MAX);
-            used_pos_prev = {};
-            score_prev.clear();
-            score_prev.push_back(0);
-            REP (i, path_prev.size()) {
-                auto [y, x] = unpack_point(path_prev[i]);
-                used_tile_prev[tile[y][x]] = i;
-                used_pos_prev[y][x] = true;
-                score_prev.push_back(score_prev.back() + point[y][x]);
-            }
-
-            if (highscore < score_prev.back()) {
-                highscore = score_prev.back();
-                result = path_prev;
-#ifdef VERBOSE
-                cerr << "highscore = " << highscore << "  (iteration = " << iteration << ")" << endl;
-#endif  // VERBOSE
-#ifdef VISUALIZE
-                cerr << "-----BEGIN-----" << endl;
-                cerr << convert_to_command_string(result) << endl;
-                cerr << "-----END-----" << endl;
-#endif  // VISUALIZE
-            }
+        if (score < highscore) {
+            highscore = score;
+            result = path;
         }
     }
 
-    string ans = convert_to_command_string(result);
-    cerr << "ans = " << ans << endl;
+    // Reconstruct the path on the grid graph
+    vector<pair<int, int>> reconstructed;
+    reconstructed.emplace_back(start_y, start_x);
+    for (int i : result) {
+        reconstructed.push_back(intersection_location[i]);
+    }
+    while (true) {
+        auto [y, x] = reconstructed.back();
+        if (y == start_y and x == start_x) {
+            break;
+        }
+        int i = intersection_index[y][x];
+        assert (i != -1);
+        if (find(ALL(start_intersections), i) != start_intersections.end()) {
+            break;
+        }
+        int found = -1;
+        for (auto [j, cost] : g[i]) {
+            if (dist_to_start_intersection(j) + cost == dist_to_start_intersection(i)) {
+                found = j;
+                break;
+            }
+        }
+        assert (found != -1);
+        reconstructed.push_back(intersection_location[found]);
+    }
+    reconstructed.emplace_back(start_y, start_x);
+#ifdef VISUALIZE
+    for (auto [y, x] : reconstructed) {
+        cerr << "(" << y << ", " << x << ") ";
+    }
+    cerr << endl;
+#endif
+
+    // Return the answer
+    string ans = convert_to_command_string(reconstructed);
+    // cerr << "ans = " << ans << endl;
     cerr << "score = " << highscore << endl;
     return ans;
 }
 
 int main() {
-    constexpr auto TIME_LIMIT = chrono::milliseconds(2000);
+    constexpr auto TIME_LIMIT = chrono::milliseconds(3000);
     chrono::high_resolution_clock::time_point clock_begin = chrono::high_resolution_clock::now();
     xor_shift_128 gen(20210425);
 
-    int sy, sx; cin >> sy >> sx;
-    array<array<int, N>, N> tile;
-    REP (y, N) {
-        REP (x, N) {
-            cin >> tile[y][x];
+    int n, sy, sx; cin >> n >> sy >> sx;
+    vector<vector<int> > c(n, vector<int>(n));
+    REP (y, n) {
+        REP (x, n) {
+            char a; cin >> a;
+            assert (('5' <= a and a <= '9') or a == '#');
+            c[y][x] = (a == '#' ? INT_MAX : a - '0');
         }
     }
-    array<array<int, N>, N> point;
-    REP (y, N) {
-        REP (x, N) {
-            cin >> point[y][x];
-        }
-    }
-    string ans = solve(sy, sx, tile, point, gen, clock_begin + chrono::duration_cast<chrono::milliseconds>(TIME_LIMIT * 0.95));
+    string ans = solve(n, sy, sx, c, gen, clock_begin + chrono::duration_cast<chrono::milliseconds>(TIME_LIMIT * 0.95));
     cout << ans << endl;
     return 0;
 }
