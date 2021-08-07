@@ -50,7 +50,7 @@ jobs:
     - name: Prepare tools/
       if: steps.cache-tools.outputs.cache-hit != 'true'
       run: |
-        wget -O tools.zip https://img.atcoder.jp/ahc002/c993bb7f09d9f8857fc90951fc6af11d.zip
+        wget -O tools.zip https://img.atcoder.jp/ahc005/dc9ed10f037e2dd4b48ca255dbd470d9.zip
         unzip tools.zip
 
     - name: Build the visualizer
