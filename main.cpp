@@ -300,31 +300,13 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
         }
     }
 
-    vector<int> result;
-    int highscore = INT_MAX;
-
-    int64_t iteration = 0;
-    double temperature = 1.0;
-    for (; ; ++ iteration) {
-        if (iteration % 64 == 0) {
-            chrono::high_resolution_clock::time_point clock_now = chrono::high_resolution_clock::now();
-            temperature = static_cast<long double>((clock_end - clock_now).count()) / (clock_end - clock_begin).count();
-            if (temperature <= 0.0) {
-                cerr << "done  (iteration = " << iteration << ")" << endl;
-                break;
-            }
-        }
-
+    auto make_random_path = [&]() -> pair<vector<int>, int> {
         vector<int> path;
         int score = 0;
         vector<bool> used(street_count);
         int cnt = 0;
         auto use = [&](int i) {
-            if (path.empty()) {
-                score += dist_from_start_intersection(i);
-            } else {
-                score += dist[path.back()][i];
-            }
+            score += (path.empty() ? dist_from_start_intersection(i) : dist[path.back()][i]);
             path.push_back(i);
             for (int k : streets_of[i]) {
                 if (not used[k]) {
@@ -346,6 +328,138 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
             use(j);
         }
         score += dist_to_start_intersection(path.back());
+        return {path, score};
+    };
+
+    vector<int> path;
+    int score;
+    tie(path, score) = make_random_path();
+
+    vector<int> cumulative_score_left;
+    vector<int> cumulative_score_right;
+    vector<vector<bool>> cumulative_used_left;
+    vector<vector<bool>> cumulative_used_right;
+    vector<vector<int>> confluence_candidates(intersection_count);
+    auto update_subinfo = [&]() {
+        // left score
+        cumulative_score_left.resize(path.size() + 1);
+        REP (i, path.size()) {
+            cumulative_score_left[i + 1] = cumulative_score_left[i] + (i == 0 ? dist_from_start_intersection(i) : dist[path[i - 1]][i]);
+        }
+        // right used
+        cumulative_score_right.resize(path.size() + 1);
+        REP_R (i, path.size()) {
+            cumulative_score_right[i] = cumulative_score_right[i + 1] + (i == 0 ? dist_from_start_intersection(i) : dist[path[i - 1]][i]);
+        }
+        // left used
+        cumulative_used_left.resize(path.size() + 1);
+        cumulative_used_left[0] = vector<bool>(street_count);
+        REP (i, path.size()) {
+            cumulative_used_left[i + 1] = cumulative_used_left[i];
+            for (int k : streets_of[path[i]]) {
+                cumulative_used_left[i + 1][k] = true;
+            }
+        }
+        // right used
+        cumulative_used_right.resize(path.size() + 1);
+        cumulative_used_right[path.size()] = vector<bool>(street_count);
+        REP_R (i, path.size()) {
+            cumulative_used_right[i] = cumulative_used_right[i + 1];
+            for (int k : streets_of[path[i]]) {
+                cumulative_used_right[i][k] = true;
+            }
+        }
+        // confluence
+        REP (k, street_count) {
+            confluence_candidates[k].clear();
+        }
+        REP_R (i, n) {
+            confluence_candidates[path[i]].push_back(i);
+        }
+    };
+    update_subinfo();
+
+    auto split_from = [&](const vector<int> &base_path, int split_start) -> tuple<vector<int>, int, int> {
+        vector<int> path;
+        int score = cumulative_score_left[split_start];
+        vector<bool> used = cumulative_used_left[split_start];
+        int cnt = count(ALL(used), true);
+        auto use = [&](int i) {
+            score += (path.empty() ? dist_from_start_intersection(i) : dist[path.back()][i]);
+            path.push_back(i);
+            for (int k : streets_of[i]) {
+                if (not used[k]) {
+                    used[k] = true;
+                    cnt += 1;
+                }
+            }
+        };
+
+        vector<vector<int>> confluence_candidates(intersection_count);
+        REP_R (i, n) {
+            confluence_candidates[base_path[i]].push_back(i);
+        }
+
+        int split_end = base_path.size();
+        if (split_start == 0) {
+            use(get_sample(start_intersections, gen));
+        }
+        while (cnt < street_count) {
+            int i = (path.empty() ? base_path[split_start - 1] : path.back());
+            int j;
+            while (true) {
+                j = get_sample(g[i], gen).first;
+                if (path.size() < 2 or path[path.size() - 2] != j or g[i].size() == 1) {
+                    break;
+                }
+            }
+            use(j);
+
+            // confluence
+            for (int cand : confluence_candidates[j]) {
+                bool failed = true;
+                REP (i, street_count) {
+                    if (not (used[i] or cumulative_used_right[cand][i])) {
+                        failed = true;
+                        break;
+                    }
+                }
+                if (not failed) {
+                    split_end = cand;
+                    score += cumulative_score_right[cand];
+                }
+            }
+        }
+        score += dist_to_start_intersection(split_end == base_path.size() ? path.back() : base_path.back());
+        return {path, split_end, score};
+    };
+
+    vector<int> result = path;
+    int highscore = score;
+
+    int64_t iteration = 0;
+    double temperature = 1.0;
+    for (; ; ++ iteration) {
+        if (iteration % 64 == 0) {
+            chrono::high_resolution_clock::time_point clock_now = chrono::high_resolution_clock::now();
+            temperature = static_cast<long double>((clock_end - clock_now).count()) / (clock_end - clock_begin).count();
+            if (temperature <= 0.0) {
+                cerr << "done  (iteration = " << iteration << ")" << endl;
+                break;
+            }
+        }
+
+        int split_start = uniform_int_distribution<int>(0, path.size() - 1)(gen);
+        auto [replace_path, split_end, next_score] = split_from(path, split_start);
+        if (next_score <= score) {
+            score = next_score;
+            vector<int> next_path;
+            next_path.insert(next_path.end(), path.begin(), path.begin() + split_start);
+            next_path.insert(next_path.end(), ALL(replace_path));
+            next_path.insert(next_path.end(), path.begin() + split_end, path.end());
+            path = move(next_path);
+            update_subinfo();
+        }
 
         if (score < highscore) {
             highscore = score;
