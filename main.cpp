@@ -452,17 +452,25 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
             }
         }
 
+
         int split_start = uniform_int_distribution<int>(0, path.size() - 1)(gen);
         auto [next_path, next_score] = split_from(path, split_start);
-        if (next_score <= score) {
+
+        int delta = score - next_score;
+        auto probability = [&]() {
+            constexpr long double boltzmann = 0.05;
+            return exp(boltzmann * delta / temperature);
+        };
+        if (delta >= 0 or bernoulli_distribution(probability())(gen)) {
+            cerr << "update " << score << " -> " << next_score << endl;
             score = next_score;
             path = move(next_path);
             update_subinfo();
-        }
 
-        if (score < highscore) {
-            highscore = score;
-            result = path;
+            if (score < highscore) {
+                highscore = score;
+                result = path;
+            }
         }
     }
 
