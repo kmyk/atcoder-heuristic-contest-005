@@ -113,7 +113,7 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
     }
 #endif
 
-    // Run Dijkstra from (start_y, start_x), before removing dead ends
+    // Run Dijkstra from (start_y, start_x)
     vector<vector<int>> dist_from_start = run_dijkstra(n, start_y, start_x, c);
     vector<vector<int>> dist_to_start = dist_from_start;
     REP (y, n) {
@@ -139,43 +139,6 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
         return neighbors;
     };
 
-    // Save neighbors of the start point, before remobing dead ends
-    auto start_neighbors = list_neighbors(start_y, start_x);
-
-    // Remove dead ends
-    auto remove_if_dead_end = [&](int y, int x) -> void {
-        if (c[y][x] != INT_MAX) {
-            if (list_neighbors(y, x).size() == 1) {
-                c[y][x] = INT_MAX;
-            }
-        }
-    };
-    // REP (y, n) {
-    //     REP (x, n) {
-    //         remove_if_dead_end(y, x);
-    //     }
-    //     REP_R (x, n) {
-    //         remove_if_dead_end(y, x);
-    //     }
-    // }
-    // REP_R (y, n) {
-    //     REP (x, n) {
-    //         remove_if_dead_end(y, x);
-    //     }
-    //     REP_R (x, n) {
-    //         remove_if_dead_end(y, x);
-    //     }
-    // }
-#ifdef VISUALIZE
-    cerr << "no dead ends:" << endl;
-    REP (y, n) {
-        REP (x, n) {
-            cerr << (char)(c[y][x] == INT_MAX ? ' ' : '0' + c[y][x]);
-        }
-        cerr << endl;
-    }
-#endif
-
     // Collect intersections of roads
     int intersection_count = 0;
     vector<vector<int>> intersection_index(n, vector<int>(n, -1));
@@ -189,7 +152,7 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
                     sum_dy += ny - y;
                     sum_dx += nx - x;
                 }
-                if (neighbors.size() >= 3 or (sum_dy != 0 or sum_dx != 0) or neighbors.size() == 1) {
+                if (neighbors.size() >= 3 or (neighbors.size() == 2 and (sum_dy != 0 or sum_dx != 0))) {
                     intersection_index[y][x] = intersection_count;
                     intersection_count += 1;
                 }
@@ -219,10 +182,13 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
                     continue;
                 }
                 int cost = 0;
-                while (intersection_index[ny][nx] == -1) {
+                while (0 <= ny and ny < n and 0 <= nx and nx < n and c[ny][nx] != INT_MAX and intersection_index[ny][nx] == -1) {
                     cost += c[ny][nx];
                     ny += DIR_Y[dir];
                     nx += DIR_X[dir];
+                }
+                if (not (0 <= ny and ny < n and 0 <= nx and nx < n) or c[ny][nx] == INT_MAX) {
+                    continue;
                 }
                 int j = intersection_index[ny][nx];
                 g[i].emplace_back(j, cost + c[ny][nx]);
@@ -274,25 +240,31 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
     // List streets
     int street_count = 0;
     vector<array<int, 2>> streets_of(intersection_count, {-1, -1});
-    REP (i, intersection_count) {
-        auto [y, x] = intersection_location[i];
-        // up and left
-        for (int dir : {0, 3}) {
-            int ny = y + DIR_Y[dir];
-            int nx = x + DIR_X[dir];
-            // the upper end or the left end of a street
-            if (not (0 <= ny and ny < n and 0 <= nx and nx < n) or c[ny][nx] == INT_MAX) {
-                int k = street_count;
-                street_count += 1;
-                dir ^= 1;  // flip the direction
-                ny = y;
-                nx = x;
-                while (0 <= ny and ny < n and 0 <= nx and nx < n and c[ny][nx] != INT_MAX) {
-                    if (intersection_index[ny][nx] != -1) {
-                        streets_of[intersection_index[ny][nx]][dir == 1 ? 0 : 1] = k;
+    REP (y, n) {
+        REP (x, n) {
+            // up and left
+            for (int dir : {0, 3}) {
+                int ny = y + DIR_Y[dir];
+                int nx = x + DIR_X[dir];
+                // the upper end or the left end of a street
+                if (not (0 <= ny and ny < n and 0 <= nx and nx < n) or c[ny][nx] == INT_MAX) {
+                    int k = street_count;
+                    street_count += 1;
+                    dir ^= 1;  // flip the direction
+                    ny = y;
+                    nx = x;
+                    bool found = false;
+                    while (0 <= ny and ny < n and 0 <= nx and nx < n and c[ny][nx] != INT_MAX) {
+                        if (intersection_index[ny][nx] != -1) {
+                            streets_of[intersection_index[ny][nx]][dir == 1 ? 0 : 1] = k;
+                            found = true;
+                        }
+                        ny += DIR_Y[dir];
+                        nx += DIR_X[dir];
                     }
-                    ny += DIR_Y[dir];
-                    nx += DIR_X[dir];
+                    if (not found) {
+                        street_count -= 1;
+                    }
                 }
             }
         }
@@ -303,6 +275,10 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
         // cerr << "(" << y << ", " << x << ") looks " << streets_of[i][0] << " and " << streets_of[i][0] << endl;
     }
 #endif
+    REP (i, intersection_count) {
+        assert (streets_of[i][0] != -1);
+        assert (streets_of[i][1] != -1);
+    }
 
     // Find start points of the intersections graph
     vector<int> start_intersections;
@@ -310,7 +286,7 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
         start_intersections.push_back(intersection_index[start_y][start_x]);
     } else {
         // use neighbors which is calculated before removing dead ends
-        for (auto [ny, nx] : start_neighbors) {
+        for (auto [ny, nx] : list_neighbors(start_y, start_x)) {
             int dy = ny - start_y;
             int dx = nx - start_x;
             while ((0 <= ny and ny < n and 0 <= nx and nx < n) and original_c[ny][nx] != INT_MAX) {
