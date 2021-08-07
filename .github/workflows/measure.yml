@@ -1,0 +1,66 @@
+name: measure
+
+on: [push, pull_request]
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        # seed: [0, 100, 200, 300, 400, 500, 600, 700, 800, 900]
+        seed: [0]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.6
+
+    - uses: actions/cache@v2
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: pip3 install -r scripts/requirements.txt
+
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+
+    - uses: actions/cache@v2
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - uses: actions/cache@v2
+      id: cache-tools
+      with:
+        path: tools/
+        key: ${{ runner.os }}-tools-${{ hashFiles('*.zip') }}
+
+    - name: Prepare tools/
+      if: steps.cache-tools.outputs.cache-hit != 'true'
+      run: |
+        wget -O tools.zip https://img.atcoder.jp/ahc002/c993bb7f09d9f8857fc90951fc6af11d.zip
+        unzip tools.zip
+
+    - name: Build the visualizer
+      run: |
+        cargo build --manifest-path=tools/Cargo.toml --release
+
+    - name: Compile the code
+      run: |
+        g++ -std=c++17 -Wall -O2 -Iac-library -DLOCAL main.cpp
+
+    - name: Measure the score
+      run: |
+        python3 scripts/measure.py --jobs 2 --count 200 --seed ${{ matrix.seed }}
