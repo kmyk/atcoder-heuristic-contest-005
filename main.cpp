@@ -398,6 +398,10 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
         REP (i, split_start) {
             use(base_path[i]);
         }
+vector<vector<int>> confluence_candidates(intersection_count);
+REP_R (i, n) {
+    confluence_candidates[base_path[i]].push_back(i);
+}
 
         if (split_start == 0) {
             use(get_sample(start_intersections, gen));
@@ -415,7 +419,8 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
 
             // confluence
             for (int split_end : confluence_candidates[j]) {
-                bool failed = true;
+                assert (path.back() == base_path[split_end]);
+                bool failed = false;
                 REP (i, street_count) {
                     if (not (used[i] or cumulative_used_right[split_end][i])) {
                         failed = true;
@@ -430,6 +435,7 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
                         }
                     }
                     assert (cnt == street_count);
+                    break;
                 }
             }
         }
