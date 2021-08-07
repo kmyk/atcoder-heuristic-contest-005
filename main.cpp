@@ -379,10 +379,10 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
     };
     update_subinfo();
 
-    auto split_from = [&](const vector<int> &base_path, int split_start) -> tuple<vector<int>, int, int> {
+    auto split_from = [&](const vector<int> &base_path, int split_start) -> tuple<vector<int>, int> {
         vector<int> path;
-        int score = cumulative_score_left[split_start];
-        vector<bool> used = cumulative_used_left[split_start];
+        int score = 0;
+        vector<bool> used(street_count);
         int cnt = count(ALL(used), true);
         auto use = [&](int i) {
             score += (path.empty() ? dist_from_start_intersection(i) : dist[path.back()][i]);
@@ -395,12 +395,10 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
             }
         };
 
-        vector<vector<int>> confluence_candidates(intersection_count);
-        REP_R (i, n) {
-            confluence_candidates[base_path[i]].push_back(i);
+        REP (i, split_start) {
+            use(base_path[i]);
         }
 
-        int split_end = base_path.size();
         if (split_start == 0) {
             use(get_sample(start_intersections, gen));
         }
@@ -416,22 +414,27 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
             use(j);
 
             // confluence
-            for (int cand : confluence_candidates[j]) {
+            for (int split_end : confluence_candidates[j]) {
                 bool failed = true;
                 REP (i, street_count) {
-                    if (not (used[i] or cumulative_used_right[cand][i])) {
+                    if (not (used[i] or cumulative_used_right[split_end][i])) {
                         failed = true;
                         break;
                     }
                 }
                 if (not failed) {
-                    split_end = cand;
-                    score += cumulative_score_right[cand];
+                    REP3 (k, split_end, base_path.size()) {
+                        use(base_path[k]);
+                        if (cnt == street_count) {
+                            break;
+                        }
+                    }
+                    assert (cnt == street_count);
                 }
             }
         }
-        score += dist_to_start_intersection(split_end == base_path.size() ? path.back() : base_path.back());
-        return {path, split_end, score};
+        score += dist_to_start_intersection(path.back());
+        return {path, score};
     };
 
     vector<int> result = path;
@@ -450,13 +453,9 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
         }
 
         int split_start = uniform_int_distribution<int>(0, path.size() - 1)(gen);
-        auto [replace_path, split_end, next_score] = split_from(path, split_start);
+        auto [next_path, next_score] = split_from(path, split_start);
         if (next_score <= score) {
             score = next_score;
-            vector<int> next_path;
-            next_path.insert(next_path.end(), path.begin(), path.begin() + split_start);
-            next_path.insert(next_path.end(), ALL(replace_path));
-            next_path.insert(next_path.end(), path.begin() + split_end, path.end());
             path = move(next_path);
             update_subinfo();
         }
