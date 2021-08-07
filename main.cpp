@@ -331,16 +331,12 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
         return {path, score};
     };
 
-    vector<int> path;
-    int score;
-    tie(path, score) = make_random_path();
-
     vector<int> cumulative_score_left;
     vector<int> cumulative_score_right;
     vector<vector<bool>> cumulative_used_left;
     vector<vector<bool>> cumulative_used_right;
     vector<vector<int>> confluence_candidates(intersection_count);
-    auto update_subinfo = [&]() {
+    auto update_subinfo = [&](const vector<int> &path) {
         // left score
         cumulative_score_left.resize(path.size() + 1);
         REP (i, path.size()) {
@@ -370,14 +366,13 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
             }
         }
         // confluence
-        REP (k, street_count) {
+        REP (k, intersection_count) {
             confluence_candidates[k].clear();
         }
         REP_R (i, n) {
             confluence_candidates[path[i]].push_back(i);
         }
     };
-    update_subinfo();
 
     auto split_from = [&](const vector<int> &base_path, int split_start) -> tuple<vector<int>, int> {
         vector<int> path;
@@ -398,10 +393,6 @@ string solve(const int n, const int start_y, const int start_x, const vector<vec
         REP (i, split_start) {
             use(base_path[i]);
         }
-vector<vector<int>> confluence_candidates(intersection_count);
-REP_R (i, n) {
-    confluence_candidates[base_path[i]].push_back(i);
-}
 
         if (split_start == 0) {
             use(get_sample(start_intersections, gen));
@@ -443,6 +434,11 @@ REP_R (i, n) {
         return {path, score};
     };
 
+    vector<int> path;
+    int score;
+    tie(path, score) = make_random_path();
+    update_subinfo(path);
+
     vector<int> result = path;
     int highscore = score;
 
@@ -464,14 +460,20 @@ REP_R (i, n) {
 
         int delta = score - next_score;
         auto probability = [&]() {
-            constexpr long double boltzmann = 0.05;
+            constexpr long double boltzmann = 0.5;
             return exp(boltzmann * delta / temperature);
         };
         if (delta >= 0 or bernoulli_distribution(probability())(gen)) {
-            cerr << "update " << score << " -> " << next_score << endl;
+#ifdef VISUALIZE
+            if (delta > 0) {
+                cerr << "update " << score << " -> " << next_score << endl;
+            } else {
+                cerr << "bad update " << score << " -> " << next_score << endl;
+            }
+#endif
             score = next_score;
             path = move(next_path);
-            update_subinfo();
+            update_subinfo(path);
 
             if (score < highscore) {
                 highscore = score;
